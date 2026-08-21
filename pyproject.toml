@@ -4,13 +4,18 @@ version = "0.1.0"
 description = "Standalone computer-vision pipeline: frame in -> per-person metadata (track_id, age/gender, head pose, attention, dwell) out. No training; pretrained models + geometry + classic image processing."
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "fastapi>=0.141.1",
     "lapx>=0.9.4",
     "mediapipe<0.10.14",
     "numpy>=2.5.1",
     "onnxruntime>=1.28.0",
     "opencv-python>=5.0.0.93",
     "pandas>=3.0.5",
+    "psycopg[binary]>=3.3.4",
+    "sqlalchemy>=2.0.52",
     "ultralytics>=8.4.114",
+    "uniface>=3.7.1",
+    "uvicorn[standard]>=0.52.3",
 ]
 
 # Real-time branch base dependencies are added via `uv add` (see PLAN.md, Phase 0).
