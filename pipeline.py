@@ -39,8 +39,9 @@ class PersonMeta:
 class Pipeline:
     """Assembles the real-time branch. Stages are enabled as phases land."""
 
-    def __init__(self, cfg=CFG):
+    def __init__(self, cfg=CFG, enable_attributes: bool = True):
         self.cfg = cfg
+        self.enable_attributes = enable_attributes
         self.tracker = FaceTracker()                 # Phase 2
         self.head_pose = HeadPoseEstimator()         # Phase 3
         self.age_gender = AgeGenderEstimator()       # Phase 4
@@ -142,9 +143,12 @@ class Pipeline:
             face_rgb = to_rgb(face_bgr) if face_bgr.size > 0 else None
 
             pose = self.head_pose.estimate(face_rgb) if face_rgb is not None else None
-            age_group, gender = self._age_gender_voted(
-                t.track_id, self._attribute_crop(frame_bgr, source_frame, t.bbox)
-            )
+            if self.enable_attributes:
+                age_group, gender = self._age_gender_voted(
+                    t.track_id, self._attribute_crop(frame_bgr, source_frame, t.bbox)
+                )
+            else:
+                age_group, gender = None, None
 
             attentive_now = is_attentive(pose) if pose is not None else False
             smoothed_att, dwell_time = self.dwell.update(t.track_id, attentive_now, now)

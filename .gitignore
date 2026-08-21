@@ -4,6 +4,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+node_modules/
+.next/
+*.tsbuildinfo
 
 # Model weights (download separately, keep out of git)
 models/
@@ -22,3 +25,4 @@ outputs/
 .DS_Store
 .idea/
 .vscode/
+.env

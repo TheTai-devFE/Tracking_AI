@@ -70,9 +70,11 @@ class Config:
     # slivers of a crop, not "small but usable" faces.
     min_face_px_for_age: int = 24
     age_bins: tuple[tuple[int, str], ...] = (
-        (18, "0-18"),
-        (35, "18-35"),
-        (55, "35-55"),
+        (18, "0-17"),
+        (25, "18-24"),
+        (35, "25-34"),
+        (45, "35-44"),
+        (55, "45-54"),
         (200, "55+"),
     )
 
