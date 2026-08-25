@@ -68,6 +68,7 @@ export default function TrackingCollector() {
   const [status, setStatus] = useState<"idle" | "connecting" | "running" | "error">("idle");
   const [statusMessage, setStatusMessage] = useState("Chưa kết nối");
   const [observations, setObservations] = useState<Observation[]>([]);
+  const [frameSize, setFrameSize] = useState<{ width: number; height: number } | null>(null);
   const [overview, setOverview] = useState<Overview>(emptyOverview);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [processingMs, setProcessingMs] = useState(0);
@@ -124,8 +125,17 @@ export default function TrackingCollector() {
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.lineWidth = 3;
     context.font = "16px Arial";
+    // Observations are in the coordinate space of the (downscaled) frame the
+    // server actually processed, not the native camera resolution — scale
+    // back up to the overlay canvas, which is sized to the native video.
+    const scaleX = frameSize ? canvas.width / frameSize.width : 1;
+    const scaleY = frameSize ? canvas.height / frameSize.height : 1;
     for (const observation of observations) {
-      const [x1, y1, x2, y2] = observation.bbox;
+      const [rx1, ry1, rx2, ry2] = observation.bbox;
+      const x1 = rx1 * scaleX;
+      const y1 = ry1 * scaleY;
+      const x2 = rx2 * scaleX;
+      const y2 = ry2 * scaleY;
       const color = observation.attentive ? "#18c46c" : "#9aa3ad";
       context.strokeStyle = color;
       context.fillStyle = color;
@@ -133,7 +143,7 @@ export default function TrackingCollector() {
       const pose = observation.yaw == null ? "" : ` Y:${observation.yaw.toFixed(0)} P:${observation.pitch?.toFixed(0)}`;
       context.fillText(`#${observation.track_id}${pose}`, x1, Math.max(18, y1 - 6));
     }
-  }, [observations]);
+  }, [observations, frameSize]);
 
   const stopTracking = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -146,6 +156,7 @@ export default function TrackingCollector() {
     setStatus("idle");
     setStatusMessage("Đã dừng");
     setObservations([]);
+    setFrameSize(null);
     loadReport();
   }, [loadReport]);
 
@@ -212,6 +223,7 @@ export default function TrackingCollector() {
         }
         if (payload.type === "frame_result") {
           setObservations(payload.observations);
+          setFrameSize({ width: payload.frame_width, height: payload.frame_height });
           setProcessingMs(payload.processing_ms);
           const counter = resultCounterRef.current;
           counter.count += 1;
