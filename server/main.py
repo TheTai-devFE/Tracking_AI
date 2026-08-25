@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 import os
 from pathlib import Path
@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 import numpy as np
 
 from audience import AudienceSessionTracker
+from audience.contracts import PersonObservation
 from preprocess import preprocess
 from providers.factory import create_provider
 from server.database import TrackingRepository, database_url_from_environment
@@ -29,6 +30,39 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 DATABASE_URL = database_url_from_environment(ROOT)
 repository = TrackingRepository(DATABASE_URL)
+
+
+def rescale_bbox_to_source(
+    observation: PersonObservation,
+    processed_frame: np.ndarray,
+    source_frame: np.ndarray,
+) -> PersonObservation:
+    """Map an observation's bbox from processed-frame space back to source-frame space.
+
+    `preprocess` may downscale the frame the client sent (CFG.process_long_side)
+    before detection runs, so providers report boxes in that internal space. That
+    is an implementation detail clients cannot know about: leaking it makes every
+    overlay draw undersized, offset boxes. Wire coordinates are always in the
+    space of the frame the client actually sent.
+    """
+    processed_height, processed_width = processed_frame.shape[:2]
+    source_height, source_width = source_frame.shape[:2]
+    if (processed_height, processed_width) == (source_height, source_width):
+        return observation
+
+    scale_x = source_width / processed_width
+    scale_y = source_height / processed_height
+    x1, y1, x2, y2 = observation.bbox
+    return replace(
+        observation,
+        bbox=(
+            round(x1 * scale_x),
+            round(y1 * scale_y),
+            round(x2 * scale_x),
+            round(y2 * scale_y),
+        ),
+    )
+
 
 app = FastAPI(title="Tracking AI API", version="0.1.0")
 cors_origins = os.getenv("TRACKING_CORS_ORIGINS", "*").split(",")
@@ -218,6 +252,10 @@ async def tracking_socket(
             frame = preprocess(source_frame)
             started = time.perf_counter()
             observations = await asyncio.to_thread(provider.observe, frame, received_at, source_frame)
+            observations = [
+                rescale_bbox_to_source(observation, frame, source_frame)
+                for observation in observations
+            ]
             closed = tracker.update(observations, received_at)
             if closed:
                 await asyncio.to_thread(repository.save_sessions, closed)
@@ -228,8 +266,12 @@ async def tracking_socket(
                     "type": "frame_result",
                     "frame_index": frame_index,
                     "server_timestamp": received_at,
-                    "frame_width": frame.shape[1],
-                    "frame_height": frame.shape[0],
+                    # Coordinate space of observations[].bbox — the frame the
+                    # client sent, not the internally downscaled one.
+                    "frame_width": source_frame.shape[1],
+                    "frame_height": source_frame.shape[0],
+                    "processed_width": frame.shape[1],
+                    "processed_height": frame.shape[0],
                     "processing_ms": round(processing_ms, 2),
                     "observations": [asdict(observation) for observation in observations],
                     "closed_sessions": [session.as_dict() for session in closed],

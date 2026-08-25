@@ -292,7 +292,7 @@ export default function StandeePlayer() {
     }
   }, [apiUrl, standeeId]);
 
-  const drawBoxes = useCallback((obsList: Observation[]) => {
+  const drawBoxes = useCallback((obsList: Observation[], frameWidth?: number, frameHeight?: number) => {
     const canvas = overlayRef.current;
     const video = cameraRef.current;
     if (!canvas || !video || video.videoWidth === 0) return;
@@ -306,8 +306,19 @@ export default function StandeePlayer() {
     if (!ctx) return;
     ctx.clearRect(0, 0, width, height);
 
+    // sendFrame downscales the camera image to maxSide 640 before sending, so
+    // the server reports boxes in that smaller space. The overlay canvas is the
+    // camera's native size — without this scale a 1280px camera draws every box
+    // at half size, offset toward the top-left.
+    const scaleX = frameWidth ? width / frameWidth : 1;
+    const scaleY = frameHeight ? height / frameHeight : 1;
+
     obsList.forEach((obs) => {
-      const [x1, y1, x2, y2] = obs.bbox;
+      const [rx1, ry1, rx2, ry2] = obs.bbox;
+      const x1 = rx1 * scaleX;
+      const y1 = ry1 * scaleY;
+      const x2 = rx2 * scaleX;
+      const y2 = ry2 * scaleY;
       const attentive = obs.attentive === true;
       ctx.strokeStyle = attentive ? "#18b566" : "#aab2ba";
       ctx.lineWidth = 3;
@@ -407,7 +418,7 @@ export default function StandeePlayer() {
           timerRef.current = setInterval(sendFrame, 100);
         } else if (data.type === "frame_result") {
           setObservations(data.observations || []);
-          drawBoxes(data.observations || []);
+          drawBoxes(data.observations || [], data.frame_width, data.frame_height);
           setProcessingMs(data.processing_ms || 0);
           resultCounterRef.current.count += 1;
           const elapsed = (performance.now() - resultCounterRef.current.started) / 1000;
