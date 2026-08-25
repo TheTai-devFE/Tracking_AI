@@ -47,7 +47,8 @@ class AudienceSession:
     age_group: str
     age_confidence: float | None
     gender: str
-    gender_confidence: float | None
+    gender_confidence: float | None = None
+    estimated_age: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

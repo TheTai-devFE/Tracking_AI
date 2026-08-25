@@ -7,11 +7,14 @@ from dataclasses import asdict, replace
 import json
 import os
 from pathlib import Path
+import shutil
 import time
+import uuid
 
 import cv2
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import numpy as np
 
 from audience import AudienceSessionTracker
@@ -22,6 +25,9 @@ from server.database import TrackingRepository, database_url_from_environment
 
 
 ROOT = Path(__file__).resolve().parents[1]
+UPLOAD_DIR = ROOT / "data" / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
 DATABASE_URL = database_url_from_environment(ROOT)
 repository = TrackingRepository(DATABASE_URL)
 
@@ -57,6 +63,7 @@ def rescale_bbox_to_source(
         ),
     )
 
+
 app = FastAPI(title="Tracking AI API", version="0.1.0")
 cors_origins = os.getenv("TRACKING_CORS_ORIGINS", "*").split(",")
 app.add_middleware(
@@ -66,6 +73,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.mount("/static/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 @app.on_event("startup")
@@ -84,6 +93,82 @@ def health() -> dict:
     }
 
 
+@app.get("/api/v1/creatives")
+def list_creatives(only_active: bool = False) -> list[dict]:
+    return repository.list_creatives(only_active=only_active)
+
+
+@app.post("/api/v1/creatives/upload")
+async def upload_creative(
+    file: UploadFile = File(...),
+    name: str = Form(None),
+    duration_seconds: float = Form(10.0),
+    campaign_id: str = Form("CMP-LOCAL"),
+) -> dict:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename missing")
+
+    ext = Path(file.filename).suffix.lower()
+    creative_id = f"cr_{uuid.uuid4().hex[:8]}"
+    clean_name = name.strip() if name and name.strip() else Path(file.filename).stem
+    stored_filename = f"{creative_id}{ext}"
+    target_path = UPLOAD_DIR / stored_filename
+
+    with target_path.open("wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    media_type = "video" if ext in {".mp4", ".webm", ".mov", ".mkv"} or (file.content_type and file.content_type.startswith("video/")) else "image"
+
+    data = {
+        "id": creative_id,
+        "name": clean_name,
+        "file_name": file.filename,
+        "file_url": f"/static/uploads/{stored_filename}",
+        "media_type": media_type,
+        "duration_seconds": max(1.0, duration_seconds),
+        "campaign_id": campaign_id,
+        "is_active": True,
+        "sort_order": len(repository.list_creatives()),
+    }
+    return repository.create_creative(data)
+
+
+@app.delete("/api/v1/creatives/{creative_id}")
+def delete_creative(creative_id: str) -> dict:
+    creatives = {c["id"]: c for c in repository.list_creatives()}
+    if creative_id in creatives:
+        file_url = creatives[creative_id].get("file_url", "")
+        if file_url.startswith("/static/uploads/"):
+            filename = file_url.removeprefix("/static/uploads/")
+            target_path = UPLOAD_DIR / filename
+            if target_path.is_file():
+                try:
+                    target_path.unlink()
+                except OSError:
+                    pass
+    deleted = repository.delete_creative(creative_id)
+    return {"status": "ok", "deleted": deleted}
+
+
+@app.patch("/api/v1/creatives/{creative_id}")
+def update_creative(creative_id: str, payload: dict = Body(...)) -> dict:
+    allowed = {"name", "duration_seconds", "is_active", "sort_order", "campaign_id"}
+    data = {k: v for k, v in payload.items() if k in allowed}
+    if not data:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    updated = repository.update_creative(creative_id, data)
+    return {"status": "ok", "updated": updated}
+
+
+@app.post("/api/v1/creatives/reorder")
+def reorder_creatives(payload: dict = Body(...)) -> dict:
+    ordered_ids = payload.get("ordered_ids")
+    if not isinstance(ordered_ids, list):
+        raise HTTPException(status_code=400, detail="ordered_ids must be a list of strings")
+    success = repository.reorder_creatives(ordered_ids)
+    return {"status": "ok", "reordered": success}
+
+
 @app.get("/api/v1/reports/overview")
 def report_overview(
     standee_id: str | None = None,
@@ -93,6 +178,14 @@ def report_overview(
     date_to: float | None = None,
 ) -> dict:
     return repository.overview(standee_id, campaign_id, creative_id, date_from, date_to)
+
+
+@app.get("/api/v1/reports/creatives")
+def report_creatives(
+    standee_id: str | None = None,
+    campaign_id: str | None = None,
+) -> list[dict]:
+    return repository.creatives_report(standee_id=standee_id, campaign_id=campaign_id)
 
 
 @app.get("/api/v1/reports/sessions")
@@ -112,9 +205,10 @@ async def tracking_socket(
     campaign_id: str = "CMP-LOCAL",
     creative_id: str = "AD-LOCAL",
     provider_name: str = "uniface",
+    enable_attributes: bool = True,
 ) -> None:
     await websocket.accept()
-    provider = create_provider(provider_name, enable_attributes=False)
+    provider = create_provider(provider_name, enable_attributes=enable_attributes)
     tracker = AudienceSessionTracker(standee_id, campaign_id, creative_id)
     frame_index = 0
     try:
@@ -127,9 +221,22 @@ async def tracking_socket(
                 break
             if message.get("text") is not None:
                 payload = json.loads(message["text"])
-                if payload.get("type") == "telemetry":
+                msg_type = payload.get("type")
+                if msg_type == "telemetry":
                     await asyncio.to_thread(repository.save_telemetry, standee_id, time.time(), payload)
                     await websocket.send_json({"type": "telemetry_ack"})
+                elif msg_type in ("set_creative", "switch_creative"):
+                    new_creative_id = payload.get("creative_id", "AD-LOCAL")
+                    new_campaign_id = payload.get("campaign_id", campaign_id)
+                    closed = tracker.switch_creative(new_creative_id, new_campaign_id)
+                    if closed:
+                        await asyncio.to_thread(repository.save_sessions, closed)
+                    await websocket.send_json({
+                        "type": "creative_switched",
+                        "creative_id": new_creative_id,
+                        "campaign_id": new_campaign_id,
+                        "closed_sessions": [s.as_dict() for s in closed],
+                    })
                 continue
 
             frame_bytes = message.get("bytes")
@@ -177,3 +284,4 @@ async def tracking_socket(
         if closed:
             await asyncio.to_thread(repository.save_sessions, closed)
         provider.reset()
+

@@ -6,14 +6,13 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.141.1",
     "lapx>=0.9.4",
-    "mediapipe<0.10.14",
     "numpy>=2.5.1",
-    "onnxruntime>=1.28.0",
-    "opencv-python>=5.0.0.93",
-    "pandas>=3.0.5",
+    "onnxruntime>=1.20.0",
+    "opencv-python<5.0",
+    "pandas>=2.0.0",
     "psycopg[binary]>=3.3.4",
+    "python-multipart>=0.0.9",
     "sqlalchemy>=2.0.52",
-    "ultralytics>=8.4.114",
     "uniface>=3.7.1",
     "uvicorn[standard]>=0.52.3",
 ]

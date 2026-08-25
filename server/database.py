@@ -19,8 +19,11 @@ from sqlalchemy import (
     String,
     Table,
     create_engine,
+    delete,
     func,
     select,
+    text,
+    update,
 )
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -53,6 +56,7 @@ audience_sessions = Table(
     Column("is_engaged", Boolean, nullable=False),
     Column("age_group", String, nullable=False),
     Column("age_confidence", Float),
+    Column("estimated_age", Float, nullable=True),
     Column("gender", String, nullable=False),
     Column("gender_confidence", Float),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.current_timestamp()),
@@ -74,6 +78,22 @@ device_telemetry = Table(
     Column("payload", JSON, nullable=False),
 )
 Index("idx_telemetry_standee_time", device_telemetry.c.standee_id, device_telemetry.c.recorded_at)
+
+creatives = Table(
+    "creatives",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("name", String, nullable=False),
+    Column("file_name", String, nullable=False),
+    Column("file_url", String, nullable=False),
+    Column("media_type", String, nullable=False),  # "video" | "image"
+    Column("duration_seconds", Float, nullable=False, default=10.0),
+    Column("campaign_id", String, nullable=False, default="CMP-LOCAL"),
+    Column("is_active", Boolean, nullable=False, default=True),
+    Column("sort_order", Integer, nullable=False, default=0),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.current_timestamp()),
+)
+Index("idx_creatives_active_order", creatives.c.is_active, creatives.c.sort_order)
 
 
 def database_url_from_environment(root: Path) -> str:
@@ -119,6 +139,14 @@ class TrackingRepository:
 
     def initialize(self) -> None:
         metadata.create_all(self.engine)
+        with self.engine.begin() as connection:
+            try:
+                if self.backend == "postgresql":
+                    connection.execute(text("ALTER TABLE audience_sessions ADD COLUMN IF NOT EXISTS estimated_age DOUBLE PRECISION;"))
+                elif self.backend == "sqlite":
+                    connection.execute(text("ALTER TABLE audience_sessions ADD COLUMN estimated_age REAL;"))
+            except Exception:
+                pass
 
     def healthcheck(self) -> None:
         with self.engine.connect() as connection:
@@ -246,3 +274,112 @@ class TrackingRepository:
             item["attention_seconds"] = round(float(item["attention_seconds"] or 0), 3)
             result.append(item)
         return result
+
+    def list_creatives(self, only_active: bool = False) -> list[dict[str, Any]]:
+        statement = select(creatives)
+        if only_active:
+            statement = statement.where(creatives.c.is_active.is_(True))
+        statement = statement.order_by(creatives.c.sort_order.asc(), creatives.c.created_at.asc())
+        with self.engine.connect() as connection:
+            rows = connection.execute(statement).mappings().all()
+        return [dict(row) for row in rows]
+
+    def create_creative(self, data: dict[str, Any]) -> dict[str, Any]:
+        with self.engine.begin() as connection:
+            connection.execute(creatives.insert().values(**data))
+        with self.engine.connect() as connection:
+            row = connection.execute(select(creatives).where(creatives.c.id == data["id"])).mappings().one()
+        return dict(row)
+
+    def delete_creative(self, creative_id: str) -> bool:
+        with self.engine.begin() as connection:
+            result = connection.execute(delete(creatives).where(creatives.c.id == creative_id))
+            return bool(result.rowcount and result.rowcount > 0)
+
+    def toggle_creative(self, creative_id: str, is_active: bool) -> bool:
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                update(creatives).where(creatives.c.id == creative_id).values(is_active=is_active)
+            )
+            return bool(result.rowcount and result.rowcount > 0)
+
+    def update_creative(self, creative_id: str, data: dict[str, Any]) -> bool:
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                update(creatives).where(creatives.c.id == creative_id).values(**data)
+            )
+            return bool(result.rowcount and result.rowcount > 0)
+
+    def reorder_creatives(self, ordered_ids: list[str]) -> bool:
+        with self.engine.begin() as connection:
+            for index, cid in enumerate(ordered_ids):
+                connection.execute(
+                    update(creatives).where(creatives.c.id == cid).values(sort_order=index)
+                )
+        return True
+
+    def creatives_report(
+        self, standee_id: str | None = None, campaign_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        filters = []
+        if standee_id:
+            filters.append(audience_sessions.c.standee_id == standee_id)
+        if campaign_id:
+            filters.append(audience_sessions.c.campaign_id == campaign_id)
+
+        session_stats = select(
+            audience_sessions.c.creative_id,
+            func.count().label("sessions"),
+            func.coalesce(func.sum(audience_sessions.c.is_impression.cast(Integer)), 0).label("impressions"),
+            func.coalesce(func.sum(audience_sessions.c.is_viewer.cast(Integer)), 0).label("viewers"),
+            func.coalesce(func.sum(audience_sessions.c.is_engaged.cast(Integer)), 0).label("engaged_viewers"),
+            func.coalesce(func.sum(audience_sessions.c.presence_seconds), 0).label("total_presence_seconds"),
+            func.coalesce(func.sum(audience_sessions.c.attention_seconds), 0).label("total_attention_seconds"),
+            func.coalesce(func.avg(audience_sessions.c.presence_seconds), 0).label("average_presence_seconds"),
+            func.coalesce(func.avg(audience_sessions.c.attention_seconds), 0).label("average_attention_seconds"),
+            func.coalesce(func.sum(audience_sessions.c.look_away_count), 0).label("look_away_count"),
+        ).where(*filters).group_by(audience_sessions.c.creative_id)
+
+        with self.engine.connect() as connection:
+            session_rows = {row["creative_id"]: dict(row) for row in connection.execute(session_stats).mappings().all()}
+            registered_creatives = {row["id"]: dict(row) for row in connection.execute(select(creatives)).mappings().all()}
+
+        all_creative_ids = set(session_rows.keys()) | set(registered_creatives.keys())
+        results = []
+        for cid in sorted(all_creative_ids):
+            stats = session_rows.get(cid, {
+                "creative_id": cid,
+                "sessions": 0,
+                "impressions": 0,
+                "viewers": 0,
+                "engaged_viewers": 0,
+                "total_presence_seconds": 0.0,
+                "total_attention_seconds": 0.0,
+                "average_presence_seconds": 0.0,
+                "average_attention_seconds": 0.0,
+                "look_away_count": 0,
+            })
+            reg = registered_creatives.get(cid, {})
+            presence = float(stats["total_presence_seconds"])
+            attention = float(stats["total_attention_seconds"])
+            rate = round(attention / presence, 4) if presence else 0.0
+
+            results.append({
+                "creative_id": cid,
+                "name": reg.get("name", cid),
+                "media_type": reg.get("media_type", "unknown"),
+                "file_url": reg.get("file_url", ""),
+                "duration_seconds": reg.get("duration_seconds", 10.0),
+                "is_active": reg.get("is_active", True),
+                "sessions": stats["sessions"],
+                "impressions": stats["impressions"],
+                "viewers": stats["viewers"],
+                "engaged_viewers": stats["engaged_viewers"],
+                "total_presence_seconds": round(presence, 2),
+                "total_attention_seconds": round(attention, 2),
+                "average_presence_seconds": round(float(stats["average_presence_seconds"]), 2),
+                "average_attention_seconds": round(float(stats["average_attention_seconds"]), 2),
+                "attention_rate": rate,
+                "look_away_count": stats["look_away_count"],
+            })
+        return results

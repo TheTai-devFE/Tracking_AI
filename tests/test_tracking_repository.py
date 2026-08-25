@@ -85,5 +85,48 @@ class TrackingRepositoryTest(unittest.TestCase):
         self.assertIn("***", repository.display_url)
 
 
+    def test_creative_crud_and_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = TrackingRepository(Path(directory) / "tracking.db")
+            repository.initialize()
+
+            # Create creative
+            created = repository.create_creative({
+                "id": "cr_test01",
+                "name": "Test Ad 1",
+                "file_name": "ad1.mp4",
+                "file_url": "/static/uploads/ad1.mp4",
+                "media_type": "video",
+                "duration_seconds": 15.0,
+                "campaign_id": "CMP-001",
+                "is_active": True,
+                "sort_order": 0,
+            })
+            self.assertEqual(created["id"], "cr_test01")
+            self.assertEqual(created["name"], "Test Ad 1")
+
+            # List creatives
+            creatives_list = repository.list_creatives()
+            self.assertEqual(len(creatives_list), 1)
+
+            # Save sessions associated with this creative
+            s = session("sess_01", viewer=True)
+            s = AudienceSession(**{**s.as_dict(), "creative_id": "cr_test01"})
+            repository.save_sessions([s])
+
+            # Check report
+            report = repository.creatives_report(standee_id="ST-001")
+            self.assertEqual(len(report), 1)
+            self.assertEqual(report[0]["creative_id"], "cr_test01")
+            self.assertEqual(report[0]["name"], "Test Ad 1")
+            self.assertEqual(report[0]["viewers"], 1)
+            self.assertEqual(report[0]["impressions"], 1)
+
+            # Delete creative
+            deleted = repository.delete_creative("cr_test01")
+            self.assertTrue(deleted)
+            self.assertEqual(len(repository.list_creatives()), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

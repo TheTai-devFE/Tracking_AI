@@ -17,7 +17,7 @@ from providers.factory import create_provider
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--provider", choices=("baseline", "uniface"), default="uniface")
+    parser.add_argument("--provider", choices=("uniface",), default="uniface")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--video")
     source.add_argument("--webcam", type=int, nargs="?", const=0)

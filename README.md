@@ -17,23 +17,17 @@ Dự án không huấn luyện model. Các bước xử lý sử dụng model pr
 
 ## Trạng thái dự án
 
-Repository hiện có hai pipeline để thử nghiệm trên cùng dữ liệu:
-
-| Provider | Thành phần chính |
-|---|---|
-| `baseline` | YOLOv8-face, ByteTrack và MediaPipe/solvePnP; MiVOLO là tùy chọn |
-| `uniface` | SCRFD, ByteTrack và MobileNetV3 head pose; age/gender là tùy chọn |
+Hệ thống sử dụng pipeline **UniFace** (SCRFD cho Face Detection, ByteTrack cho Face Tracking, MobileNetV3 cho Head Pose và tùy chọn ước lượng tuổi/giới tính).
 
 Mục tiêu hiện tại là hoàn thiện tracking, attention và dwell trên video đại diện
 cho môi trường standee. Age/gender mặc định bị tắt và chỉ được bật để thử nghiệm
-sau khi tracking ổn định. Recommendation được triển khai ở giai đoạn cuối.
+khi cần thiết.
 
 Kế hoạch và backlog:
 
 - [Kế hoạch PoC tiếng Việt](PLAN_UNIFACE_POC_VI.md)
 - [Kế hoạch PoC tiếng Anh](PLAN_UNIFACE_POC.md)
 - [Backlog triển khai](TASKS_UNIFACE_POC.md)
-- [Kế hoạch pipeline ban đầu](PLAN.md)
 
 ## Yêu cầu môi trường
 
@@ -41,25 +35,15 @@ Kế hoạch và backlog:
 - `uv` để quản lý Python, virtual environment và dependency.
 - Webcam hoặc video đầu vào để chạy thử.
 
-Không sử dụng Python 3.13 hoặc 3.14 cho môi trường dự án vì một số phiên bản
-MediaPipe không cung cấp wheel tương thích.
-
 ## Cài đặt
 
 Từ thư mục `Tracking_AI`, chạy:
 
-```powershell
+```bash
 uv sync
 ```
 
 Lệnh trên sẽ tạo `.venv` và cài dependency theo `uv.lock`.
-
-Nếu `uv` chưa có trong `PATH`, có thể chạy trực tiếp Python trong môi trường đã
-được tạo:
-
-```powershell
-.\.venv\Scripts\python.exe --version
-```
 
 ### Model weights
 
@@ -69,47 +53,40 @@ UniFace tự tải các weights cần thiết trong lần chạy đầu tiên v�
 models/uniface/
 ```
 
-Pipeline baseline cần chuẩn bị riêng:
-
-```text
-models/yolov8n-face.pt
-models/mivolo_age_gender.onnx
-```
-
 Thư mục `models/`, dữ liệu đầu vào và output đều được bỏ qua bởi Git.
 
 ## Chạy PoC UniFace
 
 ### Xử lý video
 
-```powershell
-uv run python run_experiment.py `
-  --provider uniface `
-  --video data/test.mp4 `
-  --standee-id ST-001 `
-  --campaign-id CMP-001 `
-  --creative-id AD-001 `
-  --events-out outputs/uniface-events.jsonl `
+```bash
+uv run python run_experiment.py \
+  --provider uniface \
+  --video data/test.mp4 \
+  --standee-id ST-001 \
+  --campaign-id CMP-001 \
+  --creative-id AD-001 \
+  --events-out outputs/uniface-events.jsonl \
   --render-out outputs/uniface-overlay.mp4
 ```
 
 Thêm `--display` để hiển thị overlay trong lúc xử lý:
 
-```powershell
-uv run python run_experiment.py `
-  --provider uniface `
-  --video data/test.mp4 `
-  --events-out outputs/uniface-events.jsonl `
+```bash
+uv run python run_experiment.py \
+  --provider uniface \
+  --video data/test.mp4 \
+  --events-out outputs/uniface-events.jsonl \
   --display
 ```
 
 ### Chạy webcam
 
-```powershell
-uv run python run_experiment.py `
-  --provider uniface `
-  --webcam 0 `
-  --events-out outputs/webcam-events.jsonl `
+```bash
+uv run python run_experiment.py \
+  --provider uniface \
+  --webcam 0 \
+  --events-out outputs/webcam-events.jsonl \
   --display
 ```
 
@@ -117,66 +94,20 @@ Nhấn `q` để kết thúc cửa sổ webcam.
 
 ### Bật thử nghiệm age/gender
 
-```powershell
-uv run python run_experiment.py `
-  --provider uniface `
-  --video data/test.mp4 `
-  --with-attributes `
+```bash
+uv run python run_experiment.py \
+  --provider uniface \
+  --video data/test.mp4 \
+  --with-attributes \
   --events-out outputs/uniface-with-attributes.jsonl
 ```
 
 Age/gender mặc định không chạy. Cờ `--with-attributes` tải thêm model nhân khẩu
-học; chỉ dùng sau khi đã benchmark tracking hoặc khi chạy thử riêng tính năng này.
-
-## Chạy pipeline baseline
-
-Sau khi đã có đủ weights baseline:
-
-```powershell
-uv run python run_experiment.py `
-  --provider baseline `
-  --video data/test.mp4 `
-  --standee-id ST-001 `
-  --campaign-id CMP-001 `
-  --creative-id AD-001 `
-  --events-out outputs/baseline-events.jsonl `
-  --render-out outputs/baseline-overlay.mp4
-```
-
-Các entrypoint cũ vẫn được giữ lại:
-
-```powershell
-uv run python run_webcam.py
-uv run python run_video.py --video data/test.mp4 --out outputs/test.csv
-```
-
-## So sánh hai provider
-
-Chạy baseline và UniFace trên cùng một video, sau đó tổng hợp kết quả:
-
-```powershell
-uv run python -m eval.run_comparison `
-  --baseline outputs/baseline-events.jsonl `
-  --uniface outputs/uniface-events.jsonl
-```
-
-Công cụ hiện trả về các chỉ số tổng hợp:
-
-- tổng số session;
-- số impression;
-- số viewer;
-- số engaged viewer;
-- tổng thời gian hiện diện;
-- tổng thời gian chú ý;
-- attention rate.
-
-Để đánh giá độ chính xác, cần bổ sung video người thật có ground truth cho
-viewer/non-viewer, attention duration và tính liên tục của track ID.
+học khi chạy thử riêng tính năng này.
 
 ## Benchmark tuổi và giới tính
 
-Benchmark UniFace và MiVOLO sử dụng cùng một bộ ảnh crop khuôn mặt để tránh sai
-lệch do hai detector khác nhau. Tạo manifest CSV theo mẫu:
+Benchmark UniFace sử dụng bộ ảnh crop khuôn mặt. Tạo manifest CSV theo mẫu:
 
 ```csv
 image,age,gender
@@ -184,27 +115,15 @@ image,age,gender
 ../data/age_gender/person_002.jpg,42,male
 ```
 
-Có thể tham khảo `eval/age_gender_manifest.example.csv`. Mỗi ảnh phải chứa một
-khuôn mặt đã crop tương đối sát; tuổi và giới tính là ground truth có sự đồng thuận
-của người tham gia.
+Có thể tham khảo `eval/age_gender_manifest.example.csv`.
 
-Chạy riêng UniFace:
+Chạy benchmark:
 
-```powershell
-uv run python -m eval.eval_age_gender `
-  --manifest eval/age_gender_manifest.csv `
-  --models uniface `
+```bash
+uv run python -m eval.eval_age_gender \
+  --manifest eval/age_gender_manifest.csv \
+  --models uniface \
   --output-dir outputs/age-gender-uniface
-```
-
-Chạy benchmark cả UniFace và MiVOLO:
-
-```powershell
-uv run python -m eval.eval_age_gender `
-  --manifest eval/age_gender_manifest.csv `
-  --models uniface mivolo `
-  --mivolo-weights models/mivolo_age_gender.onnx `
-  --output-dir outputs/age-gender-benchmark
 ```
 
 Benchmark tạo hai file:
@@ -212,9 +131,6 @@ Benchmark tạo hai file:
 - `predictions.csv`: dự đoán và sai số của từng ảnh;
 - `summary.json`: MAE tuổi, median absolute error, CS@5, accuracy nhóm tuổi,
   accuracy giới tính, failure rate và latency.
-
-File MiVOLO ONNX hiện không được phát hành cùng repository này. Runner sẽ dừng và
-báo đường dẫn weight còn thiếu thay vì tự dùng một model không rõ nguồn gốc.
 
 ## Định nghĩa chỉ số
 
@@ -302,29 +218,23 @@ Các test hiện tập trung vào:
 | `audience/session_tracker.py` | State machine impression, viewer, dwell và look-away. |
 | `audience/demographics.py` | Chuẩn hóa nhóm tuổi và giới tính. |
 | `providers/base.py` | Protocol dùng chung cho vision provider. |
-| `providers/baseline.py` | Adapter cho pipeline hiện tại. |
-| `providers/uniface_provider.py` | Pipeline thử nghiệm UniFace. |
+| `providers/factory.py` | Factory khởi tạo provider (`uniface`). |
+| `providers/uniface_provider.py` | Pipeline UniFace (SCRFD + ByteTrack + MobileNetV3). |
 | `run_experiment.py` | CLI video/webcam và xuất JSONL/overlay. |
-| `eval/run_comparison.py` | Tổng hợp kết quả A/B giữa hai provider. |
+| `eval/eval_age_gender.py` | Benchmark độ tuổi/giới tính UniFace. |
 | `eval/metrics.py` | Các metric session-level. |
-| `configs.py` | Ngưỡng, đường dẫn model và cấu hình thiết bị. |
+| `configs.py` | Cấu hình ngưỡng góc nhìn, kích thước xử lý và đường dẫn. |
 | `preprocess.py` | Resize, CLAHE và chuyển đổi màu. |
-| `detector.py` | Detector YOLOv8-face của baseline. |
-| `tracker.py` | Tracking ByteTrack của baseline. |
-| `age_gender.py` | Ước lượng tuổi/giới tính bằng MiVOLO. |
-| `head_pose.py` | MediaPipe Face Mesh và `solvePnP`. |
-| `attention.py` | Logic attention/dwell cũ của baseline. |
-| `pipeline.py` | Ghép các stage của baseline. |
-| `tests/` | Unit test cho PoC analytics. |
+| `server/` | FastAPI WebSocket server và database persistence. |
+| `web/` | Ứng dụng Next.js client cho standee và dashboard. |
+| `tests/` | Unit test cho PoC analytics và database. |
 
 ## Hướng phát triển tiếp theo
 
 1. Thu thập video đại diện cho vị trí camera và khoảng cách standee thực tế.
-2. Gắn ground truth viewer/non-viewer và attention duration.
-3. Chạy A/B baseline với UniFace trên cùng frame và timestamp.
-4. Chọn UniFace, pipeline hybrid hoặc baseline theo số liệu benchmark.
-5. Sau decision gate mới triển khai FastAPI, PostgreSQL, Next.js CMS và ứng dụng
-   Expo chạy trên standee.
+2. Gắn ground truth viewer/non-viewer và attention duration để đánh giá accuracy.
+3. Tinh chỉnh ngưỡng attention yaw/pitch và calibration cho từng vị trí camera.
+4. Mở rộng tính năng CMS quản trị creative và dashboard analytics.
 
 ## Website thu thập tracking
 
