@@ -64,30 +64,6 @@ class UniFaceEstimator:
         )
 
 
-class MiVOLOEstimator:
-    name = "mivolo"
-
-    def __init__(self, weights: Path) -> None:
-        if not weights.is_file():
-            raise FileNotFoundError(
-                f"Missing MiVOLO ONNX weights: {weights}. "
-                "Provide --mivolo-weights with the face-only ONNX model expected by age_gender.py."
-            )
-        from age_gender import AgeGenderEstimator
-
-        self._model = AgeGenderEstimator(weights=weights)
-
-    def predict(self, face_bgr: np.ndarray) -> Prediction:
-        result = self._model.estimate(face_bgr)
-        if result is None:
-            raise ValueError("MiVOLO returned no prediction")
-        return Prediction(
-            age=result.age,
-            gender=normalize_gender(result.gender) or "unknown",
-            gender_confidence=result.gender_conf,
-        )
-
-
 def load_manifest(path: Path, limit: int | None = None) -> list[GroundTruthSample]:
     samples: list[GroundTruthSample] = []
     with path.open(encoding="utf-8-sig", newline="") as file:
@@ -225,8 +201,7 @@ def write_predictions(path: Path, rows: list[dict]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--models", nargs="+", choices=("uniface", "mivolo"), default=["uniface", "mivolo"])
-    parser.add_argument("--mivolo-weights", type=Path, default=CFG.mivolo_weights)
+    parser.add_argument("--models", nargs="+", choices=("uniface",), default=["uniface"])
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/age-gender-benchmark"))
     parser.add_argument("--limit", type=int)
     return parser.parse_args()
@@ -238,8 +213,6 @@ def main() -> None:
     estimators: list[AttributeEstimator] = []
     if "uniface" in args.models:
         estimators.append(UniFaceEstimator())
-    if "mivolo" in args.models:
-        estimators.append(MiVOLOEstimator(args.mivolo_weights))
 
     all_rows: list[dict] = []
     summaries: dict[str, dict[str, float | int]] = {}

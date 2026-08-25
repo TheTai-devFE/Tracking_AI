@@ -70,6 +70,14 @@ class AudienceSessionTracker:
         self._active.clear()
         return sessions
 
+    def switch_creative(self, creative_id: str, campaign_id: str | None = None) -> list[AudienceSession]:
+        """Close current active sessions for the previous creative and switch to a new one."""
+        closed = self.flush()
+        self.creative_id = creative_id
+        if campaign_id:
+            self.campaign_id = campaign_id
+        return closed
+
     def _close_expired(self, now: float) -> list[AudienceSession]:
         expired = [
             key
@@ -121,13 +129,15 @@ class AudienceSessionTracker:
         agreement = weights[winner] / sum(weights.values())
         return winner, agreement
 
-    def _demographics(self, active: _ActiveSession) -> tuple[str, float | None, str, float | None]:
+    def _demographics(self, active: _ActiveSession) -> tuple[str, float | None, str, float | None, float | None]:
+        valid_ages = [sample[0] for sample in active.age_samples if sample[0] > 0]
+        estimated_age = round(float(median(valid_ages)), 1) if valid_ages else None
+
         age_labels = [(group, confidence) for _, group, confidence in active.age_samples if group]
         if age_labels:
             age_group, age_confidence = self._vote(age_labels)
-        elif active.age_samples:
-            age = median(sample[0] for sample in active.age_samples)
-            age_group = map_age_group(age)
+        elif estimated_age is not None:
+            age_group = map_age_group(estimated_age)
             age_confidence = 1.0
         else:
             age_group, age_confidence = "unknown", None
@@ -137,10 +147,10 @@ class AudienceSessionTracker:
             age_group = "unknown"
         if gender_confidence is not None and gender_confidence < self.config.gender_confidence_threshold:
             gender = "unknown"
-        return age_group, age_confidence, gender, gender_confidence
+        return age_group, age_confidence, gender, gender_confidence, estimated_age
 
     def _to_event(self, active: _ActiveSession) -> AudienceSession:
-        age_group, age_confidence, gender, gender_confidence = self._demographics(active)
+        age_group, age_confidence, gender, gender_confidence, estimated_age = self._demographics(active)
         presence = active.presence_seconds
         attention = min(active.attention_seconds, presence)
         return AudienceSession(
@@ -162,6 +172,7 @@ class AudienceSessionTracker:
             is_engaged=attention >= self.config.engaged_seconds,
             age_group=age_group,
             age_confidence=age_confidence,
+            estimated_age=estimated_age,
             gender=gender,
             gender_confidence=gender_confidence,
         )
