@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from statistics import median
+from typing import Any
 from uuid import uuid4
 
 from .contracts import AudienceSession, PersonObservation, SessionConfig
@@ -25,6 +26,11 @@ class _ActiveSession:
     look_away_count: int = 0
     age_samples: list[tuple[float, str | None, float | None]] = field(default_factory=list)
     gender_samples: list[tuple[str, float | None]] = field(default_factory=list)
+    emotion_samples: list[str] = field(default_factory=list)
+    distance_samples: list[float] = field(default_factory=list)
+    gaze_samples: list[str] = field(default_factory=list)
+    creative_presence: dict[str, float] = field(default_factory=dict)
+    creative_attention: dict[str, float] = field(default_factory=dict)
 
 
 class AudienceSessionTracker:
@@ -70,13 +76,56 @@ class AudienceSessionTracker:
         self._active.clear()
         return sessions
 
+    def active_sessions_summary(self, now: float | None = None) -> list[dict[str, Any]]:
+        """Return real-time state of all currently active live viewers."""
+        summary = []
+        for active in self._active.values():
+            if now is not None and (now - active.last_seen > 1.0):
+                # Skip viewers that are no longer actively detected in the current camera frame
+                continue
+            age_group, _, gender, _, estimated_age = self._demographics(active)
+            presence = active.presence_seconds
+            attention = min(active.attention_seconds, presence)
+            ratio = round(attention / presence, 2) if presence > 0 else 0.0
+            dominant_emotion = max(set(active.emotion_samples), key=active.emotion_samples.count) if active.emotion_samples else None
+            average_distance = round(float(median(active.distance_samples)), 1) if active.distance_samples else None
+            gaze = active.gaze_samples[-1] if active.gaze_samples else None
+
+            summary.append(
+                {
+                    "session_id": active.session_id,
+                    "track_id": active.track_id,
+                    "presence_seconds": round(presence, 1),
+                    "attention_seconds": round(attention, 1),
+                    "attention_ratio": ratio,
+                    "attentive": active.attentive,
+                    "look_away_count": active.look_away_count,
+                    "gender": gender,
+                    "age_group": age_group,
+                    "estimated_age": estimated_age,
+                    "dominant_emotion": dominant_emotion,
+                    "average_distance_m": average_distance,
+                    "gaze_direction": gaze,
+                }
+            )
+        return summary
+
     def switch_creative(self, creative_id: str, campaign_id: str | None = None) -> list[AudienceSession]:
-        """Close current active sessions for the previous creative and switch to a new one."""
-        closed = self.flush()
+        """Point new observation time at another creative, keeping live sessions open.
+
+        A session measures one person's visit, so a playlist rotation must not end
+        it: closing here would split a viewer who never moved into one session per
+        creative, inflating headcount and truncating dwell time. Time keeps
+        accruing per creative instead, and `_to_event` attributes the finished
+        session to whichever creative held the viewer's attention longest.
+
+        Returns an empty list; the signature stays list-shaped for callers that
+        forward closed sessions to storage.
+        """
         self.creative_id = creative_id
         if campaign_id:
             self.campaign_id = campaign_id
-        return closed
+        return []
 
     def _close_expired(self, now: float) -> list[AudienceSession]:
         expired = [
@@ -94,8 +143,11 @@ class AudienceSessionTracker:
         delta = max(0.0, now - active.last_seen)
         if delta <= self.config.track_gap_tolerance_seconds:
             active.presence_seconds += delta
+            creative = self.creative_id
+            active.creative_presence[creative] = active.creative_presence.get(creative, 0.0) + delta
             if active.attentive:
                 active.attention_seconds += delta
+                active.creative_attention[creative] = active.creative_attention.get(creative, 0.0) + delta
 
         attentive_now = observation.attentive is True
         if attentive_now:
@@ -116,6 +168,12 @@ class AudienceSessionTracker:
             gender = normalize_gender(observation.gender)
             if gender:
                 active.gender_samples.append((gender, observation.gender_confidence))
+        if observation.emotion:
+            active.emotion_samples.append(observation.emotion)
+        if observation.distance_m is not None:
+            active.distance_samples.append(observation.distance_m)
+        if observation.gaze_direction:
+            active.gaze_samples.append(observation.gaze_direction)
         active.last_seen = now
 
     @staticmethod
@@ -149,16 +207,27 @@ class AudienceSessionTracker:
             gender = "unknown"
         return age_group, age_confidence, gender, gender_confidence, estimated_age
 
+    def _dominant_creative(self, active: _ActiveSession) -> str:
+        """Attribute a visit spanning several creatives to the one it watched most."""
+        for tally in (active.creative_attention, active.creative_presence):
+            if tally:
+                return max(tally, key=tally.get)
+        return self.creative_id
+
     def _to_event(self, active: _ActiveSession) -> AudienceSession:
         age_group, age_confidence, gender, gender_confidence, estimated_age = self._demographics(active)
         presence = active.presence_seconds
         attention = min(active.attention_seconds, presence)
+        dominant_emotion = max(set(active.emotion_samples), key=active.emotion_samples.count) if active.emotion_samples else None
+        average_distance_m = round(float(median(active.distance_samples)), 1) if active.distance_samples else None
+        gaze_direction = max(set(active.gaze_samples), key=active.gaze_samples.count) if active.gaze_samples else None
+
         return AudienceSession(
             schema_version=1,
             session_id=active.session_id,
             standee_id=self.standee_id,
             campaign_id=self.campaign_id,
-            creative_id=self.creative_id,
+            creative_id=self._dominant_creative(active),
             provider=active.provider,
             provider_track_id=active.track_id,
             started_at=active.first_seen,
@@ -172,7 +241,10 @@ class AudienceSessionTracker:
             is_engaged=attention >= self.config.engaged_seconds,
             age_group=age_group,
             age_confidence=age_confidence,
-            estimated_age=estimated_age,
             gender=gender,
             gender_confidence=gender_confidence,
+            estimated_age=estimated_age,
+            dominant_emotion=dominant_emotion,
+            average_distance_m=average_distance_m,
+            gaze_direction=gaze_direction,
         )

@@ -97,13 +97,93 @@ button { cursor: pointer; }
 .capture-canvas { display: none; }
 .telemetry-row { margin-top: 10px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; color: var(--muted); font-size: 11px; text-align: center; }
 
-.sessions-panel { min-height: 150px; }
-.session-list { border-top: 1px solid var(--line); max-height: 260px; overflow-y: auto; }
-.session-row { display: grid; grid-template-columns: 8px 45px 1fr 1fr; align-items: center; gap: 8px; min-height: 36px; border-bottom: 1px solid #edf0f2; font-size: 11px; color: var(--muted); }
+.sessions-panel { min-height: 120px; }
+.session-list { border-top: 1px solid var(--line); max-height: 220px; overflow-y: auto; }
+.session-row { display: grid; grid-template-columns: 8px 45px 1fr 1fr 1fr; align-items: center; gap: 8px; min-height: 36px; border-bottom: 1px solid #edf0f2; font-size: 11px; color: var(--muted); }
 .session-row strong { color: var(--ink); }
 .viewer-dot { width: 7px; height: 7px; border-radius: 50%; background: #aab2ba; }
 .viewer-dot.yes { background: #18b566; }
-.empty-row { padding: 24px 0; color: var(--muted); font-size: 12px; text-align: center; }
+.empty-row { padding: 20px 0; color: var(--muted); font-size: 12px; text-align: center; }
+
+/* Realtime Live Active Session Card */
+.live-sessions-panel {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.12);
+}
+.live-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.live-card {
+  background: #ffffff;
+  border: 1.5px solid #86efac;
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  animation: fadeIn 0.2s ease-out;
+}
+.live-card.inattentive {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+.live-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+.live-card-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+  animation: pulseGreen 1.5s infinite;
+}
+.pulse-dot.grey {
+  background: #94a3b8;
+  box-shadow: none;
+  animation: none;
+}
+.live-card-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--muted);
+}
+.live-timer {
+  color: var(--green);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.live-timer.inattentive {
+  color: #64748b;
+}
+
+@keyframes pulseGreen {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 /* Admin Dashboard Styles */
 .admin-container { max-width: 1240px; margin: 0 auto; padding: 24px; width: 100%; }

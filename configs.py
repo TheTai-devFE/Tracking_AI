@@ -27,7 +27,13 @@ class Config:
     clahe_tile_grid: tuple[int, int] = (8, 8)
 
     # ---- detection & tracking ----
-    conf_threshold: float = 0.5
+    # SCRFD detects down to this score. Keeping the floor below
+    # `track_high_threshold` is what gives ByteTrack a low-score band to run its
+    # second association on; with both at the same value that branch is dead and
+    # a track loses its id the moment detection confidence dips.
+    conf_threshold: float = 0.3
+    track_high_threshold: float = 0.6   # ByteTrack first-association band
+    track_buffer_frames: int = 90       # ~9 s of memory at the ~10 fps we really run
 
     # ---- attention rule ----
     yaw_threshold_deg: float = 22.0

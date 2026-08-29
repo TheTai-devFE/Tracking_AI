@@ -53,6 +53,22 @@ class AudienceSessionTrackerTest(unittest.TestCase):
         self.assertTrue(event.is_engaged)
         self.assertEqual(event.attention_ratio, 0.75)
 
+    def test_creative_rotation_keeps_one_session_for_a_standing_viewer(self) -> None:
+        tracker = self.make_tracker(attention_on_frames=1, attention_off_frames=1)
+        for timestamp in (0.0, 0.5, 1.0):
+            tracker.update([observation(timestamp, attentive=True)], timestamp)
+
+        self.assertEqual(tracker.switch_creative("creative-b"), [])
+
+        for timestamp in (1.5, 2.0, 2.5, 3.0, 3.5):
+            tracker.update([observation(timestamp, attentive=True)], timestamp)
+
+        events = tracker.flush()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].presence_seconds, 3.5)
+        # 1.0 s on the first creative against 2.5 s on the second.
+        self.assertEqual(events[0].creative_id, "creative-b")
+
     def test_expires_missing_track_without_adding_gap_time(self) -> None:
         tracker = self.make_tracker(attention_on_frames=1, attention_off_frames=1)
         tracker.update([observation(0, attentive=True)], 0)

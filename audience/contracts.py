@@ -24,6 +24,12 @@ class PersonObservation:
     attribute_sample_count: int = 0
     gender: str | None = None
     gender_confidence: float | None = None
+    emotion: str | None = None
+    emotion_confidence: float | None = None
+    distance_m: float | None = None
+    gaze_direction: str | None = None
+    gaze_yaw: float | None = None
+    gaze_pitch: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +55,9 @@ class AudienceSession:
     gender: str
     gender_confidence: float | None = None
     estimated_age: float | None = None
+    dominant_emotion: str | None = None
+    average_distance_m: float | None = None
+    gaze_direction: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -60,7 +69,7 @@ class SessionConfig:
     min_attention_seconds: float = 0.7
     engaged_seconds: float = 5.0
     track_gap_tolerance_seconds: float = 0.5
-    session_expiry_seconds: float = 3.0
+    session_expiry_seconds: float = 2.0
     attention_on_frames: int = 3
     attention_off_frames: int = 3
     age_confidence_threshold: float = 0.55

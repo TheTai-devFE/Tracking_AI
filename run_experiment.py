@@ -28,8 +28,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render-out")
     parser.add_argument(
         "--with-attributes",
-        action="store_true",
-        help="enable experimental age/gender inference (disabled by default)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="enable age/gender inference (enabled by default, use --no-with-attributes to disable)",
     )
     parser.add_argument("--display", action="store_true")
     return parser.parse_args()
@@ -42,11 +43,10 @@ def draw_observations(frame, observations) -> None:
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
         parts = [f"#{observation.track_id}"]
         if observation.age is not None:
-            parts.append(
-                f"A:{observation.age:.0f}/{observation.age_group} n:{observation.attribute_sample_count}"
-            )
+            parts.append(f"~{observation.age:.0f}t ({observation.age_group})")
         if observation.gender:
-            parts.append(observation.gender)
+            gender_vi = "Nu" if observation.gender == "female" else "Nam" if observation.gender == "male" else observation.gender
+            parts.append(gender_vi)
         if observation.yaw is not None:
             parts.append(f"Y:{observation.yaw:.0f} P:{observation.pitch:.0f}")
         cv2.putText(

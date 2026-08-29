@@ -59,6 +59,9 @@ audience_sessions = Table(
     Column("estimated_age", Float, nullable=True),
     Column("gender", String, nullable=False),
     Column("gender_confidence", Float),
+    Column("dominant_emotion", String, nullable=True),
+    Column("average_distance_m", Float, nullable=True),
+    Column("gaze_direction", String, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.current_timestamp()),
 )
 Index(
@@ -140,13 +143,19 @@ class TrackingRepository:
     def initialize(self) -> None:
         metadata.create_all(self.engine)
         with self.engine.begin() as connection:
-            try:
-                if self.backend == "postgresql":
-                    connection.execute(text("ALTER TABLE audience_sessions ADD COLUMN IF NOT EXISTS estimated_age DOUBLE PRECISION;"))
-                elif self.backend == "sqlite":
-                    connection.execute(text("ALTER TABLE audience_sessions ADD COLUMN estimated_age REAL;"))
-            except Exception:
-                pass
+            for col, pg_type, sqlite_type in [
+                ("estimated_age", "DOUBLE PRECISION", "REAL"),
+                ("dominant_emotion", "VARCHAR(32)", "TEXT"),
+                ("average_distance_m", "DOUBLE PRECISION", "REAL"),
+                ("gaze_direction", "VARCHAR(32)", "TEXT"),
+            ]:
+                try:
+                    if self.backend == "postgresql":
+                        connection.execute(text(f"ALTER TABLE audience_sessions ADD COLUMN IF NOT EXISTS {col} {pg_type};"))
+                    elif self.backend == "sqlite":
+                        connection.execute(text(f"ALTER TABLE audience_sessions ADD COLUMN {col} {sqlite_type};"))
+                except Exception:
+                    pass
 
     def healthcheck(self) -> None:
         with self.engine.connect() as connection:

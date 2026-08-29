@@ -228,6 +228,9 @@ async def tracking_socket(
                 elif msg_type in ("set_creative", "switch_creative"):
                     new_creative_id = payload.get("creative_id", "AD-LOCAL")
                     new_campaign_id = payload.get("campaign_id", campaign_id)
+                    # Rotating the playlist never ends a visit: switch_creative
+                    # only redirects where new watch time is booked, so live
+                    # sessions run until the person actually leaves.
                     closed = tracker.switch_creative(new_creative_id, new_campaign_id)
                     if closed:
                         await asyncio.to_thread(repository.save_sessions, closed)
@@ -274,6 +277,7 @@ async def tracking_socket(
                     "processed_height": frame.shape[0],
                     "processing_ms": round(processing_ms, 2),
                     "observations": [asdict(observation) for observation in observations],
+                    "active_sessions": tracker.active_sessions_summary(received_at),
                     "closed_sessions": [session.as_dict() for session in closed],
                 }
             )

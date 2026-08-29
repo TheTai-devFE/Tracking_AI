@@ -69,6 +69,52 @@ type Overview = {
   attention_rate: number;
 };
 
+type AdminSession = {
+  session_id: string;
+  standee_id: string;
+  campaign_id: string;
+  creative_id: string;
+  provider_track_id: number;
+  started_at: number;
+  ended_at: number;
+  presence_seconds: number;
+  attention_seconds: number;
+  attention_ratio: number;
+  look_away_count: number;
+  is_impression: boolean;
+  is_viewer: boolean;
+  is_engaged: boolean;
+  age_group: string;
+  estimated_age: number | null;
+  gender: string;
+  dominant_emotion?: string | null;
+  average_distance_m?: number | null;
+  gaze_direction?: string | null;
+};
+
+function formatEmotion(emotion?: string | null): { text: string; icon: string } | null {
+  if (!emotion) return null;
+  const em = emotion.toLowerCase();
+  if (em === "happy") return { text: "Vui vẻ", icon: "😊" };
+  if (em === "neutral") return { text: "Bình thường", icon: "😐" };
+  if (em === "surprise") return { text: "Ngạc nhiên", icon: "😲" };
+  if (em === "sad") return { text: "Buồn", icon: "🙁" };
+  if (em === "angry") return { text: "Khó chịu", icon: "😠" };
+  if (em === "fear") return { text: "Lo lắng", icon: "😨" };
+  if (em === "disgust") return { text: "Thất vọng", icon: "😒" };
+  return { text: emotion, icon: "🙂" };
+}
+
+function formatGaze(gaze?: string | null): string {
+  if (!gaze) return "";
+  if (gaze === "direct") return "Trực diện 👁️";
+  if (gaze === "left") return "Nhìn trái ⬅️";
+  if (gaze === "right") return "Nhìn phải ➡️";
+  if (gaze === "down") return "Cúi xuống ⬇️";
+  if (gaze === "up") return "Ngước lên ⬆️";
+  return gaze;
+}
+
 type QueueItem = {
   id: string;
   file: File;
@@ -94,11 +140,24 @@ function detectMediaType(file: File): "video" | "image" {
   return "image";
 }
 
+function formatTimestamp(timestamp: number): string {
+  if (!timestamp) return "—";
+  const date = new Date(timestamp * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  const seconds = pad(date.getSeconds());
+  const day = pad(date.getDate());
+  const month = pad(date.getMonth() + 1);
+  return `${hours}:${minutes}:${seconds} ${day}/${month}`;
+}
+
 export default function AdminPage() {
   const [apiUrl, setApiUrl] = useState("http://localhost:8000");
-  const [activeTab, setActiveTab] = useState<"playlist" | "analytics">("playlist");
+  const [activeTab, setActiveTab] = useState<"playlist" | "analytics" | "sessions">("playlist");
   const [creatives, setCreatives] = useState<Creative[]>([]);
   const [reports, setReports] = useState<CreativeReport[]>([]);
+  const [sessions, setSessions] = useState<AdminSession[]>([]);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -116,14 +175,16 @@ export default function AdminPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [crRes, repRes, ovRes] = await Promise.all([
+      const [crRes, repRes, ovRes, sessRes] = await Promise.all([
         fetch(`${apiUrl}/api/v1/creatives`),
         fetch(`${apiUrl}/api/v1/reports/creatives`),
         fetch(`${apiUrl}/api/v1/reports/overview`),
+        fetch(`${apiUrl}/api/v1/reports/sessions?limit=100`),
       ]);
       if (crRes.ok) setCreatives(await crRes.json());
       if (repRes.ok) setReports(await repRes.json());
       if (ovRes.ok) setOverview(await ovRes.json());
+      if (sessRes.ok) setSessions(await sessRes.json());
     } catch (err) {
       console.error("Failed to load admin data:", err);
     } finally {
@@ -365,13 +426,19 @@ export default function AdminPage() {
             className={`tab-btn ${activeTab === "playlist" ? "active" : ""}`}
             onClick={() => setActiveTab("playlist")}
           >
-            <Layers size={17} /> Quản lý Playlist ({creatives.length} nội dung)
+            <Layers size={17} /> Quản lý Playlist ({creatives.length})
           </button>
           <button
             className={`tab-btn ${activeTab === "analytics" ? "active" : ""}`}
             onClick={() => setActiveTab("analytics")}
           >
-            <BarChart3 size={17} /> Báo cáo Hiệu quả từng Creative ({reports.length})
+            <BarChart3 size={17} /> Hiệu quả từng Creative ({reports.length})
+          </button>
+          <button
+            className={`tab-btn ${activeTab === "sessions" ? "active" : ""}`}
+            onClick={() => setActiveTab("sessions")}
+          >
+            <Users size={17} /> Nhật ký Chi tiết Phiên xem ({sessions.length})
           </button>
         </div>
 
@@ -731,6 +798,150 @@ export default function AdminPage() {
                     <td style={{ textAlign: "right", color: "var(--muted)" }}>{r.look_away_count} lần</td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Tab 3: Detailed Audience Sessions Log */}
+        {activeTab === "sessions" && (
+          <div className="table-card">
+            <div className="table-header">
+              <div>
+                <h2>Nhật ký Chi tiết Từng Phiên Xem (Audience Sessions)</h2>
+                <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+                  Lưu vết toàn bộ các phiên ghé thăm, thời gian xem, nhân khẩu học và mức độ tương tác
+                </span>
+              </div>
+              <span className="badge active">
+                <Users size={12} /> {sessions.length} Phiên đã lưu
+              </span>
+            </div>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th style={{ width: "120px" }}>Thời gian</th>
+                  <th>Người xem (ID / Nhân khẩu học)</th>
+                  <th style={{ textAlign: "center" }}>Khoảng cách</th>
+                  <th style={{ textAlign: "center" }}>Cảm xúc</th>
+                  <th style={{ textAlign: "center" }}>Hướng nhìn</th>
+                  <th style={{ textAlign: "right" }}>Thời gian đứng</th>
+                  <th style={{ textAlign: "right" }}>Thời gian nhìn</th>
+                  <th style={{ textAlign: "right" }}>Tỉ lệ chú ý</th>
+                  <th>Phân loại</th>
+                  <th style={{ textAlign: "right" }}>Quay mặt đi</th>
+                  <th>Quảng cáo đang phát</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.length === 0 && (
+                  <tr>
+                    <td colSpan={11} style={{ textAlign: "center", padding: "40px", color: "var(--muted)" }}>
+                      Chưa có phiên nào được ghi nhận. Hãy mở màn hình Standee và bật Camera Tracking!
+                    </td>
+                  </tr>
+                )}
+                {sessions.map((s) => {
+                  const genderVi = s.gender === "female" ? "Nữ" : s.gender === "male" ? "Nam" : "";
+                  const ageText = s.estimated_age
+                    ? `~${Math.round(s.estimated_age)} tuổi`
+                    : s.age_group && s.age_group !== "unknown"
+                    ? s.age_group
+                    : "";
+                  const demo = [genderVi, ageText].filter(Boolean).join(" • ");
+                  const emo = formatEmotion(s.dominant_emotion);
+                  const gaze = formatGaze(s.gaze_direction);
+
+                  return (
+                    <tr key={s.session_id}>
+                      <td>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px" }}>
+                          <Clock size={13} color="var(--muted)" />
+                          <span>{formatTimestamp(s.started_at)}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span className={`viewer-dot ${s.is_viewer ? "yes" : ""}`} />
+                          <strong>#{s.provider_track_id}</strong>
+                          {demo && (
+                            <span
+                              style={{
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                padding: "2px 8px",
+                                borderRadius: "10px",
+                                background: "var(--blue-soft)",
+                                color: "var(--blue)",
+                              }}
+                            >
+                              {demo}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td style={{ textAlign: "center" }}>
+                        {s.average_distance_m ? (
+                          <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "10px", background: "#f1f5f9", color: "#475569", fontWeight: 600 }}>
+                            📏 {s.average_distance_m}m
+                          </span>
+                        ) : "—"}
+                      </td>
+                      <td style={{ textAlign: "center" }}>
+                        {emo ? (
+                          <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "10px", background: "#fef3c7", color: "#92400e", fontWeight: 600 }}>
+                            {emo.icon} {emo.text}
+                          </span>
+                        ) : "—"}
+                      </td>
+                      <td style={{ textAlign: "center" }}>
+                        {gaze ? (
+                          <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "10px", background: "#e0f2fe", color: "#0369a1", fontWeight: 600 }}>
+                            {gaze}
+                          </span>
+                        ) : "—"}
+                      </td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>
+                        {s.presence_seconds.toFixed(1)}s
+                      </td>
+                      <td style={{ textAlign: "right", color: "var(--green)", fontWeight: 700 }}>
+                        {s.attention_seconds.toFixed(1)}s
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        <span
+                          style={{
+                            padding: "2px 8px",
+                            borderRadius: "10px",
+                            background: s.attention_ratio > 0.6 ? "var(--green-soft)" : "var(--canvas)",
+                            color: s.attention_ratio > 0.6 ? "var(--green)" : "inherit",
+                            fontWeight: "700",
+                          }}
+                        >
+                          {Math.round(s.attention_ratio * 100)}%
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                          {s.is_engaged ? (
+                            <span className="badge active" style={{ background: "var(--blue-soft)", color: "var(--blue)" }}>
+                              Engaged Viewer
+                            </span>
+                          ) : s.is_viewer ? (
+                            <span className="badge active">Viewer</span>
+                          ) : (
+                            <span className="badge inactive">Impression</span>
+                          )}
+                        </div>
+                      </td>
+                      <td style={{ textAlign: "right", color: "var(--muted)" }}>
+                        {s.look_away_count > 0 ? `${s.look_away_count} lần` : "—"}
+                      </td>
+                      <td>
+                        <code>{s.creative_id}</code>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -37,6 +37,9 @@ type Observation = {
   age?: number | null;
   age_group?: string | null;
   gender?: string | null;
+  emotion?: string | null;
+  distance_m?: number | null;
+  gaze_direction?: string | null;
 };
 
 type Overview = {
@@ -59,7 +62,49 @@ type Session = {
   age_group?: string;
   estimated_age?: number;
   gender?: string;
+  dominant_emotion?: string;
+  average_distance_m?: number;
+  gaze_direction?: string;
 };
+
+type ActiveSession = {
+  session_id: string;
+  track_id: number;
+  presence_seconds: number;
+  attention_seconds: number;
+  attention_ratio: number;
+  attentive: boolean;
+  look_away_count: number;
+  gender: string;
+  age_group: string;
+  estimated_age: number | null;
+  dominant_emotion?: string | null;
+  average_distance_m?: number | null;
+  gaze_direction?: string | null;
+};
+
+function formatEmotion(emotion?: string | null): { text: string; icon: string } | null {
+  if (!emotion) return null;
+  const em = emotion.toLowerCase();
+  if (em === "happy") return { text: "Vui vẻ", icon: "😊" };
+  if (em === "neutral") return { text: "Bình thường", icon: "😐" };
+  if (em === "surprise") return { text: "Ngạc nhiên", icon: "😲" };
+  if (em === "sad") return { text: "Buồn", icon: "🙁" };
+  if (em === "angry") return { text: "Khó chịu", icon: "😠" };
+  if (em === "fear") return { text: "Lo lắng", icon: "😨" };
+  if (em === "disgust") return { text: "Thất vọng", icon: "😒" };
+  return { text: emotion, icon: "🙂" };
+}
+
+function formatGaze(gaze?: string | null): string {
+  if (!gaze) return "";
+  if (gaze === "direct") return "Trực diện 👁️";
+  if (gaze === "left") return "Nhìn trái ⬅️";
+  if (gaze === "right") return "Nhìn phải ➡️";
+  if (gaze === "down") return "Cúi xuống ⬇️";
+  if (gaze === "up") return "Ngước lên ⬆️";
+  return gaze;
+}
 
 type PlaylistItem = {
   id: string;
@@ -124,6 +169,7 @@ export default function StandeePlayer() {
   const [status, setStatus] = useState<"idle" | "connecting" | "running" | "error">("idle");
   const [statusMessage, setStatusMessage] = useState("Chưa kết nối");
   const [observations, setObservations] = useState<Observation[]>([]);
+  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
   const [overview, setOverview] = useState<Overview>(emptyOverview);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [processingMs, setProcessingMs] = useState(0);
@@ -232,10 +278,15 @@ export default function StandeePlayer() {
     }
   }, [currentCreative?.url, currentCreative?.type]);
 
-  // Synchronize dynamic creative with AI backend WebSocket
+  // Synchronize dynamic creative with AI backend WebSocket.
+  // currentCreative is a fresh object on every playlist poll, so gate on the id:
+  // announcing an unchanged creative makes the backend close every live session.
+  const announcedCreativeRef = useRef<string | null>(null);
   useEffect(() => {
     if (!currentCreative) return;
+    if (announcedCreativeRef.current === currentCreative.id) return;
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      announcedCreativeRef.current = currentCreative.id;
       socketRef.current.send(
         JSON.stringify({
           type: "set_creative",
@@ -325,13 +376,22 @@ export default function StandeePlayer() {
       ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
 
       const genderVi = obs.gender === "female" ? "Nữ" : obs.gender === "male" ? "Nam" : "";
-      const ageText = obs.age ? `~${Math.round(obs.age)} tuổi` : obs.age_group && obs.age_group !== "unknown" ? obs.age_group : "";
-      const demoPart = [genderVi, ageText].filter(Boolean).join(" • ");
-      const anglePart = obs.yaw !== null ? `${Math.round(obs.yaw)}°` : "";
-      const tag = `#${obs.track_id}${anglePart ? ` | ${anglePart}` : ""}${demoPart ? ` | ${demoPart}` : ""}`;
+      const ageText = obs.age ? `~${Math.round(obs.age)}t` : obs.age_group && obs.age_group !== "unknown" ? obs.age_group : "";
+      const distText = obs.distance_m ? `${obs.distance_m}m` : "";
+      const emo = formatEmotion(obs.emotion);
+      const emoText = emo ? `${emo.icon} ${emo.text}` : "";
+      const gazeText = formatGaze(obs.gaze_direction);
+      const parts = [
+        `#${obs.track_id}`,
+        [genderVi, ageText].filter(Boolean).join(" "),
+        distText,
+        emoText,
+        gazeText,
+      ].filter(Boolean);
+      const tag = parts.join(" | ");
 
       ctx.fillStyle = attentive ? "#18b566" : "#4a5568";
-      ctx.font = "bold 13px sans-serif";
+      ctx.font = "bold 12px sans-serif";
       const textWidth = ctx.measureText(tag).width;
       ctx.fillRect(x1, Math.max(0, y1 - 22), textWidth + 8, 20);
       ctx.fillStyle = "#ffffff";
@@ -386,6 +446,7 @@ export default function StandeePlayer() {
     setStatus("idle");
     setStatusMessage("Đã dừng");
     setObservations([]);
+    setActiveSessions([]);
     loadReport();
   }, [loadReport]);
 
@@ -418,6 +479,9 @@ export default function StandeePlayer() {
           timerRef.current = setInterval(sendFrame, 100);
         } else if (data.type === "frame_result") {
           setObservations(data.observations || []);
+          if (data.active_sessions) {
+            setActiveSessions(data.active_sessions);
+          }
           drawBoxes(data.observations || [], data.frame_width, data.frame_height);
           setProcessingMs(data.processing_ms || 0);
           resultCounterRef.current.count += 1;
@@ -734,6 +798,85 @@ export default function StandeePlayer() {
             </div>
           </section>
 
+          {/* Realtime Live Active Viewers */}
+          <section className="panel live-sessions-panel">
+            <div className="panel-title">
+              <span className={`pulse-dot ${activeSessions.length > 0 ? "" : "grey"}`} />
+              <h2>Đang xem trực tiếp ({activeSessions.length})</h2>
+              {activeSessions.length > 0 && (
+                <span className="track-count" style={{ background: "#dcfce7", color: "#16a34a" }}>
+                  LIVE
+                </span>
+              )}
+            </div>
+            <div className="live-card-list">
+              {activeSessions.length === 0 && (
+                <div className="empty-row" style={{ padding: "12px 0" }}>
+                  Chưa có ai trước camera
+                </div>
+              )}
+              {activeSessions.map((act) => {
+                const genderVi = act.gender === "female" ? "Nữ" : act.gender === "male" ? "Nam" : "";
+                const ageText = act.estimated_age ? `~${Math.round(act.estimated_age)}t` : act.age_group && act.age_group !== "unknown" ? act.age_group : "";
+                const demo = [genderVi, ageText].filter(Boolean).join(" • ");
+                const emo = formatEmotion(act.dominant_emotion);
+                const gaze = formatGaze(act.gaze_direction);
+                return (
+                  <div key={act.session_id} className={`live-card ${act.attentive ? "" : "inattentive"}`}>
+                    <div className="live-card-header">
+                      <div className="live-card-tag">
+                        <span className={`viewer-dot ${act.attentive ? "yes" : ""}`} />
+                        <span>#{act.track_id}</span>
+                        {demo && <span style={{ color: "var(--blue)", fontWeight: 600, fontSize: "11px" }}>{demo}</span>}
+                        {act.average_distance_m && (
+                          <span style={{ fontSize: "10px", padding: "1px 5px", borderRadius: "4px", background: "#f1f5f9", color: "#475569", fontWeight: 600 }}>
+                            📏 {act.average_distance_m}m
+                          </span>
+                        )}
+                      </div>
+                      <span
+                        style={{
+                          fontSize: "10px",
+                          fontWeight: 700,
+                          padding: "2px 6px",
+                          borderRadius: "4px",
+                          background: act.attentive ? "var(--green-soft)" : "var(--canvas)",
+                          color: act.attentive ? "var(--green)" : "var(--muted)",
+                        }}
+                      >
+                        {act.attentive ? "Đang nhìn" : "Quay mặt đi"}
+                      </span>
+                    </div>
+
+                    {(emo || gaze) && (
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center", fontSize: "11px", marginTop: "2px" }}>
+                        {emo && (
+                          <span style={{ padding: "1px 6px", borderRadius: "4px", background: "#fef3c7", color: "#92400e", fontWeight: 600, fontSize: "10px" }}>
+                            {emo.icon} {emo.text}
+                          </span>
+                        )}
+                        {gaze && (
+                          <span style={{ padding: "1px 6px", borderRadius: "4px", background: "#e0f2fe", color: "#0369a1", fontWeight: 600, fontSize: "10px" }}>
+                            {gaze}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="live-card-stats">
+                      <span className={`live-timer ${act.attentive ? "" : "inattentive"}`}>
+                        ⏱️ {act.presence_seconds.toFixed(1)}s đứng • {act.attention_seconds.toFixed(1)}s nhìn
+                      </span>
+                      {act.look_away_count > 0 && (
+                        <span>{act.look_away_count} lần quay đi</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
           {/* Recent Sessions */}
           <section className="panel sessions-panel">
             <div className="panel-title">
@@ -745,13 +888,15 @@ export default function StandeePlayer() {
               {sessions.map((session) => {
                 const genderVi = session.gender === "female" ? "Nữ" : session.gender === "male" ? "Nam" : "";
                 const ageText = session.estimated_age
-                  ? `~${Math.round(session.estimated_age)} tuổi`
+                  ? `~${Math.round(session.estimated_age)}t`
                   : session.age_group && session.age_group !== "unknown"
                   ? session.age_group
                   : "";
-                const demo = [genderVi, ageText].filter(Boolean).join(" • ");
+                const emo = formatEmotion(session.dominant_emotion);
+                const gaze = formatGaze(session.gaze_direction);
+                const demo = [genderVi, ageText, session.average_distance_m ? `${session.average_distance_m}m` : "", emo?.icon].filter(Boolean).join(" • ");
                 return (
-                  <div className="session-row" key={session.session_id} style={{ gridTemplateColumns: "8px 45px 1fr 1fr 1fr" }}>
+                  <div className="session-row" key={session.session_id} style={{ gridTemplateColumns: "8px 40px 1fr 1fr 1fr" }}>
                     <span className={`viewer-dot ${session.is_viewer ? "yes" : ""}`} />
                     <strong>#{session.provider_track_id}</strong>
                     <span>{session.presence_seconds.toFixed(1)}s đứng</span>
